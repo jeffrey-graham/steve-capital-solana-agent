@@ -82,6 +82,92 @@ class MandatePolicy:
         canonical = json.dumps(dataclasses.asdict(self), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    def to_steve_kernel_mandate(
+        self,
+        *,
+        objective: str = "Quarter-Kelly Barbell Yield, Commodity Basis & MultiHopper Settlement",
+        statement: str = (
+            "Allocate USDC/SOL across audited Solana DeFi vaults and synthetic commodity perps "
+            "with strict Pyth confidence gates, TRM screening, and non-custodial MultiHopper routing."
+        ),
+        usdc_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        approval_threshold_usd: Optional[float] = None,
+        min_liquidity_pct: int = 15,
+        max_protocol_exposure_pct: int = 35,
+    ) -> Dict[str, Any]:
+        """
+        Exports a schema-exact Steve Capital Kernel Mandate object compatible with
+        `agent.prepare_mandate` / `agent.validate_mandate` on `steve.oobeprotocol.ai`.
+        """
+        steve_registry_map = {
+            "kamino": "kamino",
+            "jupiter": "jupiter",
+            "phoenix": "phoenix",
+            "meteora_dlmm": "meteora",
+            "raydium_clmm": "raydium",
+            "orca_whirlpool": "orca",
+            "adrena": "adrena",
+            "multihopper": "multihopper",
+        }
+        approved_protocols = sorted(
+            {steve_registry_map[p] for p in self.allowed_protocols if p in steve_registry_map}
+        )
+        threshold = (
+            round(self.max_single_tx_usd * 0.5, 2)
+            if approval_threshold_usd is None
+            else round(approval_threshold_usd, 2)
+        )
+        drawdown_pct = max(1, min(100, int(round(self.max_portfolio_drawdown_bps / 100))))
+        return {
+            "walletAddress": self.agent_wallet,
+            "objective": objective[:100],
+            "statement": statement[:600],
+            "capital": [
+                {
+                    "mint": usdc_mint,
+                    "symbol": "USDC",
+                    "amount": round(self.funded_balance_usd, 2),
+                }
+            ],
+            "limits": {
+                "maxTxSizeUsd": round(self.max_single_tx_usd, 2),
+                "approvalThresholdUsd": threshold,
+                "dailyBudget": {
+                    "period": "utc-day",
+                    "assets": [
+                        {
+                            "mint": usdc_mint,
+                            "symbol": "USDC",
+                            "amount": round(self.max_rolling_24h_spend_usd, 2),
+                        }
+                    ],
+                },
+                "maxProtocolExposurePct": max(1, min(100, max_protocol_exposure_pct)),
+                "minLiquidityPct": max(0, min(100, min_liquidity_pct)),
+                "approvedProtocols": approved_protocols,
+                "drawdownLimitPct": drawdown_pct,
+                "leverage": "none" if self.max_perp_leverage <= 1.0 else round(self.max_perp_leverage, 2),
+                "execution": {
+                    "actions": ["deposit", "withdraw", "swap", "hedge", "route_transfer"],
+                    "tools": [
+                        "steve_evaluate_mandate",
+                        "steve_compute_barbell_strategy",
+                        "steve_delegate_subagent_vault",
+                        "multihopper_plan_compliant_route",
+                    ],
+                    "markets": ["SOL/USDC", "USDC", "XAU-PERP", "WTI-PERP"],
+                    "maxPositionNotionalUsd": round(self.funded_balance_usd * (max_protocol_exposure_pct / 100.0), 2),
+                    "stopLossPct": max(1, min(100, int(round(drawdown_pct * 0.6)))),
+                    "requireStopLoss": True,
+                    "forbidAddingToLosingPositions": True,
+                    "unresolvedRules": [],
+                },
+            },
+            "version": 1,
+            "status": "active",
+            "policyDigest": self.policy_digest(),
+        }
+
 
 @dataclasses.dataclass(frozen=True)
 class SubAgentDelegation:
@@ -606,6 +692,31 @@ def plan_multihopper_route(
             "fits_single_atomic_tx": v0_alt_bytes <= SOLANA_MAX_PACKET_BYTES,
         },
         "disbursements": disbursements,
+        "multihopper_broadcast_plan": {
+            "expectedSigner": policy.agent_wallet,
+            "maxHopGroups": 25,
+            "totalGroups": 1 + hop_count,
+            "withinGroupCeiling": (1 + hop_count) <= 25,
+            "relayEndpoint": "/api/multihopper/broadcast",
+            "groups": [
+                {
+                    "groupIndex": 0,
+                    "kind": "orchestratorInit",
+                    "txFormat": "legacy",
+                    "signingMode": "partialSign",
+                },
+                *[
+                    {
+                        "groupIndex": idx + 1,
+                        "kind": "hopExecution",
+                        "venue": venue,
+                        "txFormat": "v0",
+                        "signingMode": "sign",
+                    }
+                    for idx, venue in enumerate(intermediate_venues)
+                ],
+            ],
+        },
         "mandate_receipt": guardrail["verifiable_receipt"],
         "multihopper_route_id": f"mh:route:v1:{route_digest[:28]}",
     }

@@ -250,6 +250,54 @@ class TestSteveCapitalAgent(unittest.TestCase):
             httpd.server_close()
             thread.join(timeout=2)
 
+    def test_11_steve_kernel_mandate_schema_and_sap_streamable_http_2025_06_18(self) -> None:
+        # Negotiates MCP 2025-06-18 matching https://mcp.sap.oobeprotocol.ai/mcp
+        init_2025 = handle_mcp_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18"},
+            }
+        )
+        self.assertEqual(init_2025["result"]["protocolVersion"], "2025-06-18")
+
+        mandate_call = handle_mcp_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 12,
+                "method": "tools/call",
+                "params": {
+                    "name": "steve_export_kernel_mandate",
+                    "arguments": {"funded_balance_usd": 500.0, "approval_threshold_usd": 100.0},
+                },
+            }
+        )
+        self.assertFalse(mandate_call["result"]["isError"])
+        kernel_mandate = mandate_call["result"]["structuredContent"]
+        self.assertEqual(kernel_mandate["walletAddress"], self.policy.agent_wallet)
+        self.assertEqual(kernel_mandate["limits"]["dailyBudget"]["period"], "utc-day")
+        self.assertIn("kamino", kernel_mandate["limits"]["approvedProtocols"])
+        self.assertTrue(kernel_mandate["limits"]["execution"]["requireStopLoss"])
+
+        # MultiHopper broadcast plan matches orchestratorInit (legacy partialSign) + v0 hop groups <= 25
+        route = plan_multihopper_route(
+            self.policy,
+            input_token="USDC",
+            input_amount=120.0,
+            output_token="USDC",
+            recipients=[
+                {"wallet": "DestWalletAlpha111111111111111111111111111", "label": "Ops", "share_bps": 6000},
+                {"wallet": "DestWalletBeta2222222222222222222222222222", "label": "SubVault", "share_bps": 4000},
+            ],
+        )
+        bplan = route["multihopper_broadcast_plan"]
+        self.assertTrue(bplan["withinGroupCeiling"])
+        self.assertEqual(bplan["groups"][0]["kind"], "orchestratorInit")
+        self.assertEqual(bplan["groups"][0]["signingMode"], "partialSign")
+        self.assertEqual(bplan["groups"][1]["txFormat"], "v0")
+        self.assertEqual(bplan["relayEndpoint"], "/api/multihopper/broadcast")
+
 
 if __name__ == "__main__":
     unittest.main()

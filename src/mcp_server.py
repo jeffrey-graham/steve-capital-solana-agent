@@ -24,11 +24,40 @@ from src.capital_engine import (
     plan_multihopper_route,
 )
 
+MCP_SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2024-11-05")
+
 MCP_SERVER_INFO = {
     "name": "steve-capital-multihopper-guardian",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "vendor": "OOBE SAP MCP & MultiHopper Ecosystem Builder",
-    "protocolVersion": "2024-11-05",
+    "protocolVersion": "2025-06-18",
+    "transport": "streamable-http",
+}
+
+STEVE_MCP_WORKSPACE_CONFIG = {
+    "mcpServers": {
+        "sap": {
+            "type": "http",
+            "url": "https://mcp.sap.oobeprotocol.ai/mcp",
+            "transport": "streamable-http",
+        },
+        "mh-docs": {
+            "type": "http",
+            "url": "https://dev-docs.multihopper.com/mcp",
+            "transport": "streamable-http",
+        },
+        "mh-api": {
+            "type": "http",
+            "url": "https://multihopper.com/api/mcp",
+            "transport": "streamable-http",
+            "credentialClass": "env-managed",
+        },
+        "steve-capital-guardian": {
+            "type": "http",
+            "url": "http://127.0.0.1:8787/mcp",
+            "transport": "streamable-http",
+        },
+    }
 }
 
 DEFAULT_MANDATE = MandatePolicy(
@@ -127,6 +156,19 @@ MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
             "required": ["input_amount", "recipients"],
         },
     },
+    {
+        "name": "steve_export_kernel_mandate",
+        "description": "Export a schema-exact Steve Capital Kernel Mandate JSON payload (`agent.prepare_mandate` / `agent.validate_mandate` compatible on `steve.oobeprotocol.ai`).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "funded_balance_usd": {"type": "number", "default": 500.0},
+                "approval_threshold_usd": {"type": "number", "default": 100.0},
+                "min_liquidity_pct": {"type": "integer", "default": 15},
+                "max_protocol_exposure_pct": {"type": "integer", "default": 35},
+            },
+        },
+    },
 ]
 
 
@@ -154,11 +196,17 @@ def handle_mcp_request(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
 
     if method == "initialize":
+        requested_version = str(params.get("protocolVersion", "2024-11-05"))
+        negotiated_version = (
+            requested_version
+            if requested_version in MCP_SUPPORTED_PROTOCOL_VERSIONS
+            else "2024-11-05"
+        )
         return {
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": negotiated_version,
                 "serverInfo": MCP_SERVER_INFO,
                 "capabilities": {
                     "tools": {"listChanged": False},
@@ -189,6 +237,11 @@ def handle_mcp_request(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                         "name": "Solana DeFi & Adrena Commodity Opportunity Snapshot",
                         "mimeType": "application/json",
                     },
+                    {
+                        "uri": "steve://mcp-workspace/config",
+                        "name": "OOBE SAP MCP + MultiHopper MCP Streamable-HTTP Workspace Config",
+                        "mimeType": "application/json",
+                    },
                 ]
             },
         }
@@ -198,8 +251,11 @@ def handle_mcp_request(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if uri == "steve://mandates/default-policy":
             body = dataclasses.asdict(DEFAULT_MANDATE)
             body["policy_digest"] = DEFAULT_MANDATE.policy_digest()
+            body["steve_kernel_mandate"] = DEFAULT_MANDATE.to_steve_kernel_mandate()
         elif uri == "steve://markets/solana-defi-snapshot":
             body = {"markets": [dataclasses.asdict(m) for m in DEFAULT_MARKET_SNAPSHOT]}
+        elif uri == "steve://mcp-workspace/config":
+            body = STEVE_MCP_WORKSPACE_CONFIG
         else:
             return {
                 "jsonrpc": "2.0",
@@ -262,6 +318,12 @@ def handle_mcp_request(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                         args.get("intermediate_venues") or ("Meteora DLMM", "Orca Whirlpool")
                     ),
                     trm_max_observed_risk=int(args.get("trm_max_observed_risk", 4)),
+                )
+            elif tool_name == "steve_export_kernel_mandate":
+                payload = policy.to_steve_kernel_mandate(
+                    approval_threshold_usd=float(args.get("approval_threshold_usd", 100.0)),
+                    min_liquidity_pct=int(args.get("min_liquidity_pct", 15)),
+                    max_protocol_exposure_pct=int(args.get("max_protocol_exposure_pct", 35)),
                 )
             else:
                 return {

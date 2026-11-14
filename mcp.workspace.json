@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "sap": {
+      "type": "http",
+      "url": "https://mcp.sap.oobeprotocol.ai/mcp",
+      "transport": "streamable-http"
+    },
+    "mh-docs": {
+      "type": "http",
+      "url": "https://dev-docs.multihopper.com/mcp",
+      "transport": "streamable-http"
+    },
+    "mh-api": {
+      "type": "http",
+      "url": "https://multihopper.com/api/mcp",
+      "transport": "streamable-http",
+      "credentialClass": "env-managed"
+    },
+    "steve-capital-guardian": {
+      "type": "http",
+      "url": "http://127.0.0.1:8787/mcp",
+      "transport": "streamable-http"
+    }
+  }
+}
