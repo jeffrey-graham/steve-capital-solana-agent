@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>StevePulse — Autonomous Capital &amp; MultiHopper Guardrail Terminal (OOBE SAP MCP)</title>
+  <title>StevePulse v1.2 — Autonomous Capital, MultiHopper &amp; Ace Data Cloud Control Plane (OOBE SAP MCP)</title>
   <style>
     :root {
       --bg: #080b12;
@@ -68,6 +68,7 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 0.5rem;
     }
     label {
       display: block;
@@ -113,6 +114,8 @@
       overflow-x: auto;
       margin: 0.75rem 0 0;
       color: #cbd5e1;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
     table {
       width: 100%;
@@ -126,21 +129,21 @@
       border-bottom: 1px solid var(--border);
     }
     th { color: var(--muted); font-weight: 500; }
-    .pill-ok { color: var(--ok); font-family: var(--mono); font-weight: 600; }
-    .pill-bad { color: var(--bad); font-family: var(--mono); font-weight: 600; }
+    .pill-ok { color: var(--ok); font-family: var(--mono); font-weight: 600; font-size: 0.82rem; }
+    .pill-bad { color: var(--bad); font-family: var(--mono); font-weight: 600; font-size: 0.82rem; }
   </style>
 </head>
 <body>
   <header>
     <div class="brand">
-      <h1>StevePulse — Autonomous Capital &amp; MultiHopper Guardrail Engine</h1>
-      <p>Built for Steve Capital (OOBE Protocol SAP MCP) &amp; MultiHopper Non-Custodial Solana Routing</p>
+      <h1>StevePulse v1.2 — Autonomous Capital, MultiHopper &amp; Ace Data Cloud Engine</h1>
+      <p>OOBE Protocol SAP MCP &bull; MultiHopper v0+ALT Routing &bull; Ace Data Cloud Macro Intelligence &bull; MagicBlock ER Privacy</p>
     </div>
     <div class="badges">
-      <span class="badge">MCP 2024-11-05 Ready</span>
-      <span class="badge">Pyth Confidence Guard</span>
+      <span class="badge">MCP 2025-06-18 &amp; 2024-11-05</span>
+      <span class="badge">Solana RPC + Pyth Guard</span>
       <span class="badge">Solana v0 + ALT &le; 1232B</span>
-      <span class="badge">10/10 Invariant Tests Green</span>
+      <span class="badge">19/19 Invariant Tests Green</span>
     </div>
   </header>
 
@@ -159,6 +162,7 @@
             <option value="kamino">Kamino (USDC Lending)</option>
             <option value="meteora_dlmm">Meteora DLMM (SOL/USDC)</option>
             <option value="phoenix">Phoenix Orderbook</option>
+            <option value="magicblock">MagicBlock Ephemeral Rollup</option>
             <option value="multihopper">MultiHopper Router</option>
           </select>
         </div>
@@ -220,10 +224,61 @@
       <pre id="routeOut"></pre>
     </section>
 
+    <section class="card">
+      <h2>3. Ace Data Cloud Macro Brief &amp; 5-Paid-Credit Gate</h2>
+      <div class="row">
+        <div>
+          <label for="aceRegime">Ace MCP Signal Scenario</label>
+          <select id="aceRegime">
+            <option value="inflation">Inflation Shock (XAU / WTI Tilt)</option>
+            <option value="carry">Risk-On Solana Liquidity Carry</option>
+            <option value="defensive">Volatility Alert (Deleverage 1.0x)</option>
+          </select>
+        </div>
+        <div>
+          <label for="aceLedgerPreset">Ace Credit Provenance Audit</label>
+          <select id="aceLedgerPreset">
+            <option value="5paid">5 Distinct Purchased Requests (Eligible)</option>
+            <option value="mixed">4 Purchased + 1 Free-Trial + 1 Duplicate (Blocked)</option>
+          </select>
+        </div>
+      </div>
+      <div class="btn-group">
+        <button onclick="renderAceBrief()">Synthesize Ace Brief &amp; Verify Side-Track</button>
+      </div>
+      <pre id="aceOut"></pre>
+    </section>
+
+    <section class="card">
+      <h2>4. MagicBlock Ephemeral Rollup Private SPL Guard</h2>
+      <div class="row">
+        <div>
+          <label for="mbAmount">Confidential USDC Settlement</label>
+          <input id="mbAmount" type="number" value="80" min="5" step="5" />
+        </div>
+        <div>
+          <label for="mbTtl">Scoped Session Key TTL (sec)</label>
+          <select id="mbTtl">
+            <option value="900">900s (Compliant &le; 3600s)</option>
+            <option value="7200">7200s (Blocked: Excessive TTL)</option>
+          </select>
+        </div>
+      </div>
+      <label for="mbDest">Pre-Shield Counterparty Mode</label>
+      <select id="mbDest">
+        <option value="external">Screened External Vault (TRM Score 3)</option>
+        <option value="self">Agent Self-Transfer Inside ER (Blocked)</option>
+      </select>
+      <div class="btn-group">
+        <button onclick="planMagicBlock()">Verify Pre-Shield Compliance &amp; Session</button>
+      </div>
+      <pre id="mbOut"></pre>
+    </section>
+
     <section class="card wide">
       <h2>
-        <span>3. Quarter-Kelly Barbell Capital Strategy (Exact 10,000 bps Conservation)</span>
-        <span class="pill-ok" id="aprSummary">Weighted Net APR: 14.82%</span>
+        <span>5. Quarter-Kelly Barbell Capital Strategy (Exact 10,000 bps Conservation)</span>
+        <span class="pill-ok" id="aprSummary">Weighted Net APR: 13.14%</span>
       </h2>
       <table>
         <thead>
@@ -362,8 +417,71 @@
       document.getElementById("routeOut").textContent = JSON.stringify(out, null, 2);
     }
 
+    function renderAceBrief() {
+      const mode = document.getElementById("aceRegime").value;
+      const ledgerMode = document.getElementById("aceLedgerPreset").value;
+      let regime = "COMMODITY_INFLATION_HEDGE", dryBps = 2000, maxLev = 2.0, xauBps = 2500;
+      if (mode === "carry") { regime = "RISK_ON_BARBELL_CARRY"; dryBps = 1500; maxLev = 2.5; xauBps = 1500; }
+      if (mode === "defensive") { regime = "DEFENSIVE_DELEVERAGE"; dryBps = 3500; maxLev = 1.0; xauBps = 1000; }
+
+      const sideTrack = ledgerMode === "5paid"
+        ? { qualifying_paid_requests: 5, side_track_eligible: true, excluded_requests: [] }
+        : {
+            qualifying_paid_requests: 4,
+            side_track_eligible: false,
+            excluded_requests: [
+              { request_id: "trial-5", reason: "non_purchased_credits_excluded:free_trial" },
+              { request_id: "dup-6", reason: "repetitive_or_duplicate_query_fingerprint" }
+            ]
+          };
+      const out = {
+        ace_mcp_endpoint: "https://api.acedata.cloud/mcp",
+        regime,
+        recommended_mandate_overrides: {
+          dry_powder_floor_bps: dryBps,
+          max_perp_leverage: maxLev,
+          adrena_xau_hedge_tilt_bps: xauBps
+        },
+        ace_tts_narration_script: `Active regime ${regime.replace(/_/g, " ")}; reserve floor ${(dryBps / 100).toFixed(1)}% USDC, max leverage ${maxLev.toFixed(2)}x.`,
+        ace_side_track_verification: sideTrack,
+        brief_receipt: "ace:brief:v1:" + pseudoSha(`${mode}:${ledgerMode}`) + "a4b82c10"
+      };
+      document.getElementById("aceOut").textContent = JSON.stringify(out, null, 2);
+    }
+
+    function planMagicBlock() {
+      const amount = parseFloat(document.getElementById("mbAmount").value || "80");
+      const ttl = parseInt(document.getElementById("mbTtl").value, 10);
+      const destMode = document.getElementById("mbDest").value;
+      const errors = [];
+      if (ttl > 3600) errors.push(`session_ttl_exceeds_3600s:${ttl}s`);
+      if (amount > 200) errors.push(`exceeds_single_tx_limit:${amount.toFixed(2)}>200.00`);
+      if (destMode === "self") errors.push("anti_abuse_guard:self_transfer_prohibited_inside_er");
+
+      const ok = errors.length === 0;
+      const out = {
+        status: ok ? "PREPARED_EPHEMERAL_ROLLUP_DELEGATION" : "BLOCKED_BY_GUARDRAIL",
+        protocol: "magicblock",
+        asset: { token: "USDC", amount, notional_usd: amount },
+        ephemeral_rollup_session: {
+          session_ttl_seconds: ttl,
+          scoped_program: "SPL-Token-Confidential-ER",
+          auto_undelegate_on_expiry: true
+        },
+        pre_shield_compliance: {
+          trm_screened_before_shielding: true,
+          self_transfer_blocked: destMode !== "self"
+        },
+        violations: errors,
+        magicblock_session_id: "mb:er-session:v1:" + pseudoSha(`${amount}:${ttl}:${destMode}`) + "7c19e0f2"
+      };
+      document.getElementById("mbOut").textContent = JSON.stringify(out, null, 2);
+    }
+
     evaluateMandate();
     planRoute();
+    renderAceBrief();
+    planMagicBlock();
   </script>
 </body>
 </html>

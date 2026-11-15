@@ -1,9 +1,10 @@
 """
-Steve Capital x OOBE SAP MCP x MultiHopper — MCP 2024-11-05 Server
-==================================================================
-Provides JSON-RPC 2.0 STDIO and HTTP transports compatible with OOBE SAP MCP
-and Steve Capital MCP Workspace (`initialize`, `notifications/initialized`,
-`ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`).
+Steve Capital x OOBE SAP MCP x MultiHopper x Ace Data Cloud — MCP Server
+========================================================================
+Provides JSON-RPC 2.0 STDIO and Streamable HTTP transports compatible with
+OOBE SAP MCP (`2025-06-18` & `2024-11-05`) and Steve Capital MCP Workspace
+(`initialize`, `notifications/initialized`, `ping`, `tools/list`, `tools/call`,
+`resources/list`, `resources/read`).
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import dataclasses
 import http.server
 import json
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from src.capital_engine import (
     DEFAULT_MARKET_SNAPSHOT,
@@ -23,13 +24,18 @@ from src.capital_engine import (
     evaluate_mandate_action,
     plan_multihopper_route,
 )
+from src.partner_integrations import (
+    plan_magicblock_private_settlement,
+    synthesize_acedata_macro_brief,
+)
+from src.solana_telemetry import inspect_solana_arena_wallet
 
 MCP_SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2024-11-05")
 
 MCP_SERVER_INFO = {
     "name": "steve-capital-multihopper-guardian",
-    "version": "1.1.0",
-    "vendor": "OOBE SAP MCP & MultiHopper Ecosystem Builder",
+    "version": "1.2.0",
+    "vendor": "OOBE SAP MCP, MultiHopper & Ace Data Cloud Ecosystem Builder",
     "protocolVersion": "2025-06-18",
     "transport": "streamable-http",
 }
@@ -52,6 +58,12 @@ STEVE_MCP_WORKSPACE_CONFIG = {
             "transport": "streamable-http",
             "credentialClass": "env-managed",
         },
+        "ace-mcp": {
+            "type": "http",
+            "url": "https://api.acedata.cloud/mcp",
+            "transport": "streamable-http",
+            "credentialClass": "env-managed",
+        },
         "steve-capital-guardian": {
             "type": "http",
             "url": "http://127.0.0.1:8787/mcp",
@@ -63,7 +75,7 @@ STEVE_MCP_WORKSPACE_CONFIG = {
 DEFAULT_MANDATE = MandatePolicy(
     mandate_id="mandate-steve-main-001",
     owner_wallet="7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
-    agent_wallet="StvCapAgnt9PqW3vK8mN2xR5tY7uJ4hL6zB1cV9dEfGh",
+    agent_wallet="9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     funded_balance_usd=500.0,
     max_single_tx_usd=200.0,
     max_rolling_24h_spend_usd=600.0,
@@ -73,10 +85,10 @@ DEFAULT_MANDATE = MandatePolicy(
     max_pyth_conf_bps=30,
 )
 
-MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
+MCP_TOOLS_SCHEMA: list[dict[str, Any]] = [
     {
         "name": "steve_evaluate_mandate",
-        "description": "Evaluate an onchain action (Kamino, Meteora, Adrena XAU/WTI, Phoenix, MultiHopper) against programmable Steve Capital guardrails, TRM risk screening, and anti-wash rules.",
+        "description": "Evaluate an onchain action (Kamino, Meteora, Adrena XAU/WTI, Phoenix, MagicBlock, MultiHopper) against programmable Steve Capital guardrails, TRM risk screening, and anti-wash rules.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -169,10 +181,51 @@ MCP_TOOLS_SCHEMA: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "name": "solana_inspect_arena_wallet",
+        "description": "Verify a Solana Mainnet-Beta wallet's native SOL and SPL USDC balances against the >= $20 USD Steve Capital Arena funding floor using live RPC + Pyth Hermes v2.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "wallet_address": {"type": "string", "description": "Base58 32-byte Solana wallet public key."},
+                "sol_price_usd": {"type": "number", "description": "Optional SOL/USD override for deterministic simulation."},
+            },
+            "required": ["wallet_address"],
+        },
+    },
+    {
+        "name": "acedata_macro_regime_brief",
+        "description": "Synthesize Ace Data Cloud MCP search/research signals + Pyth spreads into a Steve Capital regime recommendation, TTS script, and optional >= 5 purchased-credit side-track eligibility audit.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "pyth_sol_conf_bps": {"type": "integer", "default": 9},
+                "pyth_xau_conf_bps": {"type": "integer", "default": 12},
+                "signals": {"type": "array", "items": {"type": "object"}},
+                "paid_ledger": {"type": "array", "items": {"type": "object"}},
+            },
+        },
+    },
+    {
+        "name": "magicblock_plan_private_transfer",
+        "description": "Plan a confidential SPL token settlement via MagicBlock Ephemeral Rollups with pre-shielding TRM screening, anti-self-transfer checks, and bounded session-key TTLs.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "token": {"type": "string", "default": "USDC"},
+                "amount": {"type": "number"},
+                "recipient_wallet": {"type": "string"},
+                "session_ttl_seconds": {"type": "integer", "default": 900},
+                "commit_interval_ms": {"type": "integer", "default": 5000},
+                "trm_risk_score": {"type": "integer", "default": 3},
+            },
+            "required": ["amount", "recipient_wallet"],
+        },
+    },
 ]
 
 
-def _policy_with_overrides(args: Dict[str, Any]) -> MandatePolicy:
+def _policy_with_overrides(args: dict[str, Any]) -> MandatePolicy:
     funded = float(args.get("funded_balance_usd", DEFAULT_MANDATE.funded_balance_usd))
     max_conf = int(args.get("max_pyth_conf_bps", DEFAULT_MANDATE.max_pyth_conf_bps))
     return dataclasses.replace(
@@ -182,7 +235,7 @@ def _policy_with_overrides(args: Dict[str, Any]) -> MandatePolicy:
     )
 
 
-def handle_mcp_request(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def handle_mcp_request(request: dict[str, Any]) -> dict[str, Any] | None:
     """
     Processes a single JSON-RPC 2.0 MCP message.
     Returns None for JSON-RPC notifications (messages without an `id` member).
@@ -239,7 +292,7 @@ def handle_mcp_request(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     },
                     {
                         "uri": "steve://mcp-workspace/config",
-                        "name": "OOBE SAP MCP + MultiHopper MCP Streamable-HTTP Workspace Config",
+                        "name": "OOBE SAP MCP + MultiHopper + Ace Data Cloud Streamable-HTTP Config",
                         "mimeType": "application/json",
                     },
                 ]
@@ -325,13 +378,37 @@ def handle_mcp_request(request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     min_liquidity_pct=int(args.get("min_liquidity_pct", 15)),
                     max_protocol_exposure_pct=int(args.get("max_protocol_exposure_pct", 35)),
                 )
+            elif tool_name == "solana_inspect_arena_wallet":
+                sol_override = args.get("sol_price_usd")
+                payload = inspect_solana_arena_wallet(
+                    str(args["wallet_address"]),
+                    sol_price_usd=float(sol_override) if sol_override is not None else None,
+                )
+            elif tool_name == "acedata_macro_regime_brief":
+                payload = synthesize_acedata_macro_brief(
+                    policy,
+                    signals=args.get("signals"),
+                    pyth_sol_conf_bps=int(args.get("pyth_sol_conf_bps", 9)),
+                    pyth_xau_conf_bps=int(args.get("pyth_xau_conf_bps", 12)),
+                    paid_ledger=args.get("paid_ledger"),
+                )
+            elif tool_name == "magicblock_plan_private_transfer":
+                payload = plan_magicblock_private_settlement(
+                    policy,
+                    token=str(args.get("token", "USDC")),
+                    amount=float(args["amount"]),
+                    recipient_wallet=str(args["recipient_wallet"]),
+                    session_ttl_seconds=int(args.get("session_ttl_seconds", 900)),
+                    commit_interval_ms=int(args.get("commit_interval_ms", 5000)),
+                    trm_risk_score=int(args.get("trm_risk_score", 3)),
+                )
             else:
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
                     "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
                 }
-        except (MandateViolationError, ValueError, KeyError, TypeError) as exc:
+        except (MandateViolationError, ValueError, KeyError, TypeError, RuntimeError) as exc:
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
@@ -379,10 +456,10 @@ def serve_stdio() -> None:
 
 
 class McpHttpHandler(http.server.BaseHTTPRequestHandler):
-    def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+    def log_message(self, format: str, *args: Any) -> None:
         return
 
-    def do_GET(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:
         if self.path in ("/health", "/mcp/health"):
             body = json.dumps({"ok": True, "server": MCP_SERVER_INFO}).encode("utf-8")
             self.send_response(200)
@@ -394,7 +471,7 @@ class McpHttpHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(404)
         self.end_headers()
 
-    def do_POST(self) -> None:  # noqa: N802
+    def do_POST(self) -> None:
         if self.path != "/mcp":
             self.send_response(404)
             self.end_headers()

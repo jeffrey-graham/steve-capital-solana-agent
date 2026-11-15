@@ -14,7 +14,8 @@ import dataclasses
 import hashlib
 import json
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 SOLANA_MAX_PACKET_BYTES = 1232
 STEVE_MIN_ARENA_FUNDING_USD = 20.0
@@ -38,7 +39,7 @@ SUPPORTED_ECOSYSTEM_PROTOCOLS = frozenset(
 
 ADRENA_SYNTHETIC_MARKETS = frozenset({"SOL-PERP", "XAU-PERP", "XAG-PERP", "WTI-PERP"})
 
-TOKEN_USD_REFERENCE: Dict[str, float] = {
+TOKEN_USD_REFERENCE: dict[str, float] = {
     "USDC": 1.00,
     "USDT": 1.00,
     "USDG": 1.00,
@@ -64,7 +65,7 @@ class MandatePolicy:
     max_portfolio_drawdown_bps: int = 600
     max_perp_leverage: float = 3.0
     max_pyth_conf_bps: int = 35
-    allowed_protocols: Tuple[str, ...] = (
+    allowed_protocols: tuple[str, ...] = (
         "kamino",
         "meteora_dlmm",
         "raydium_clmm",
@@ -91,10 +92,10 @@ class MandatePolicy:
             "with strict Pyth confidence gates, TRM screening, and non-custodial MultiHopper routing."
         ),
         usdc_mint: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-        approval_threshold_usd: Optional[float] = None,
+        approval_threshold_usd: float | None = None,
         min_liquidity_pct: int = 15,
         max_protocol_exposure_pct: int = 35,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Exports a schema-exact Steve Capital Kernel Mandate object compatible with
         `agent.prepare_mandate` / `agent.validate_mandate` on `steve.oobeprotocol.ai`.
@@ -107,6 +108,7 @@ class MandatePolicy:
             "raydium_clmm": "raydium",
             "orca_whirlpool": "orca",
             "adrena": "adrena",
+            "magicblock": "magicblock",
             "multihopper": "multihopper",
         }
         approved_protocols = sorted(
@@ -117,7 +119,7 @@ class MandatePolicy:
             if approval_threshold_usd is None
             else round(approval_threshold_usd, 2)
         )
-        drawdown_pct = max(1, min(100, int(round(self.max_portfolio_drawdown_bps / 100))))
+        drawdown_pct = max(1, min(100, round(self.max_portfolio_drawdown_bps / 100)))
         return {
             "walletAddress": self.agent_wallet,
             "objective": objective[:100],
@@ -148,16 +150,20 @@ class MandatePolicy:
                 "drawdownLimitPct": drawdown_pct,
                 "leverage": "none" if self.max_perp_leverage <= 1.0 else round(self.max_perp_leverage, 2),
                 "execution": {
-                    "actions": ["deposit", "withdraw", "swap", "hedge", "route_transfer"],
+                    "actions": ["deposit", "withdraw", "swap", "hedge", "route_transfer", "private_transfer"],
                     "tools": [
                         "steve_evaluate_mandate",
                         "steve_compute_barbell_strategy",
                         "steve_delegate_subagent_vault",
                         "multihopper_plan_compliant_route",
+                        "steve_export_kernel_mandate",
+                        "solana_inspect_arena_wallet",
+                        "acedata_macro_regime_brief",
+                        "magicblock_plan_private_transfer",
                     ],
                     "markets": ["SOL/USDC", "USDC", "XAU-PERP", "WTI-PERP"],
                     "maxPositionNotionalUsd": round(self.funded_balance_usd * (max_protocol_exposure_pct / 100.0), 2),
-                    "stopLossPct": max(1, min(100, int(round(drawdown_pct * 0.6)))),
+                    "stopLossPct": max(1, min(100, round(drawdown_pct * 0.6))),
                     "requireStopLoss": True,
                     "forbidAddingToLosingPositions": True,
                     "unresolvedRules": [],
@@ -177,7 +183,7 @@ class SubAgentDelegation:
     vault_address: str
     allocated_budget_usd: float
     max_single_tx_usd: float
-    allowed_protocols: Tuple[str, ...]
+    allowed_protocols: tuple[str, ...]
     auto_revoke_drawdown_bps: int
     expires_at_unix: int
 
@@ -194,7 +200,7 @@ class MarketOpportunity:
     liquidity_depth_usd: float
 
 
-DEFAULT_MARKET_SNAPSHOT: List[MarketOpportunity] = [
+DEFAULT_MARKET_SNAPSHOT: list[MarketOpportunity] = [
     MarketOpportunity(
         venue="Kamino Main Vault",
         protocol="kamino",
@@ -252,7 +258,7 @@ def detect_route_abuse(
     origin_wallet: str,
     hop_wallets_or_pools: Sequence[str],
     destination_wallets: Sequence[str],
-) -> Tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """
     Detects prohibited wash-trading, self-transfers, and circular A->B->A flows
     in accordance with Steve Capital Arena and MultiHopper anti-abuse rules.
@@ -274,7 +280,7 @@ def detect_route_abuse(
             return True, f"duplicate_recipient_split:{d_norm}"
         seen_dests.add(d_norm)
 
-    visited_nodes: List[str] = [origin_norm]
+    visited_nodes: list[str] = [origin_norm]
     for hop in hop_wallets_or_pools:
         h_norm = hop.strip()
         if not h_norm:
@@ -301,14 +307,14 @@ def evaluate_mandate_action(
     leverage: float = 1.0,
     pyth_conf_bps: int = 8,
     trm_risk_score: int = 0,
-    destination_wallets: Optional[Sequence[str]] = None,
-    intermediate_hops: Optional[Sequence[str]] = None,
-) -> Dict[str, Any]:
+    destination_wallets: Sequence[str] | None = None,
+    intermediate_hops: Sequence[str] | None = None,
+) -> dict[str, Any]:
     """
     Evaluates a candidate autonomous execution against a Steve Capital MandatePolicy.
     Returns a structured decision record and verifiable SHA-256 receipt.
     """
-    violations: List[str] = []
+    violations: list[str] = []
     proto = protocol.strip().lower()
 
     if policy.funded_balance_usd < STEVE_MIN_ARENA_FUNDING_USD:
@@ -444,11 +450,11 @@ def delegate_subagent_vault(
 
 def compute_barbell_strategy(
     policy: MandatePolicy,
-    opportunities: Optional[Sequence[MarketOpportunity]] = None,
+    opportunities: Sequence[MarketOpportunity] | None = None,
     *,
     dry_powder_floor_bps: int = 1500,
     risk_free_rate_bps: int = 450,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Computes a Pyth-oracle-filtered, quarter-Kelly risk-adjusted Barbell allocation
     across Kamino yield vaults, Meteora/Raydium LPs, and Adrena/Phoenix perpetual carry.
@@ -460,8 +466,8 @@ def compute_barbell_strategy(
     market_list = list(opportunities) if opportunities is not None else list(DEFAULT_MARKET_SNAPSHOT)
     parent_allow = {p.lower() for p in policy.allowed_protocols}
 
-    eligible: List[Tuple[MarketOpportunity, float]] = []
-    rejected: List[Dict[str, Any]] = []
+    eligible: list[tuple[MarketOpportunity, float]] = []
+    rejected: list[dict[str, Any]] = []
 
     for opp in market_list:
         proto = opp.protocol.lower()
@@ -484,7 +490,7 @@ def compute_barbell_strategy(
         eligible.append((opp, quarter_kelly_score))
 
     allocatable_bps = 10_000 - dry_powder_floor_bps
-    allocations: List[Dict[str, Any]] = []
+    allocations: list[dict[str, Any]] = []
 
     if not eligible:
         return {
@@ -508,9 +514,9 @@ def compute_barbell_strategy(
 
     total_score = sum(score for _, score in eligible)
     # Cap any single volatile sleeve (spot_lp / perp_*) at 3000 bps for barbell safety
-    raw_bps: List[int] = []
+    raw_bps: list[int] = []
     for opp, score in eligible:
-        share = int(round(allocatable_bps * (score / total_score)))
+        share = round(allocatable_bps * (score / total_score))
         if opp.category != "yield":
             share = min(share, 3000)
         raw_bps.append(share)
@@ -519,10 +525,9 @@ def compute_barbell_strategy(
     assigned_bps = sum(raw_bps)
     remainder_bps = allocatable_bps - assigned_bps
     yield_indices = [i for i, (opp, _) in enumerate(eligible) if opp.category == "yield"]
-    if remainder_bps != 0:
-        if yield_indices:
-            raw_bps[yield_indices[0]] += remainder_bps
-            remainder_bps = 0
+    if remainder_bps != 0 and yield_indices:
+        raw_bps[yield_indices[0]] += remainder_bps
+        remainder_bps = 0
 
     final_dry_powder_bps = dry_powder_floor_bps + remainder_bps
 
@@ -562,7 +567,7 @@ def compute_barbell_strategy(
     return {
         "mandate_id": policy.mandate_id,
         "capital_usd": round(policy.funded_balance_usd, 2),
-        "weighted_expected_apr_bps": int(round(weighted_apr_accum)),
+        "weighted_expected_apr_bps": round(weighted_apr_accum),
         "total_weight_bps": total_bps_check,
         "allocations": allocations,
         "rejected_opportunities": rejected,
@@ -575,11 +580,11 @@ def plan_multihopper_route(
     input_token: str,
     input_amount: float,
     output_token: str,
-    recipients: Sequence[Dict[str, Any]],
+    recipients: Sequence[dict[str, Any]],
     intermediate_venues: Sequence[str] = ("Meteora DLMM", "Orca Whirlpool"),
     trm_max_observed_risk: int = 5,
     rolling_24h_spent_usd: float = 0.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Plans a non-custodial MultiHopper route for a Steve Capital autonomous agent:
       1. Enforces exact 10,000 bps split conservation across recipients.
@@ -606,7 +611,7 @@ def plan_multihopper_route(
 
     # Estimate price impact improvement from split routing across venues
     hop_count = max(1, len(intermediate_venues))
-    estimated_slippage_bps = max(8, int(round(22 / math.sqrt(hop_count))))
+    estimated_slippage_bps = max(8, round(22 / math.sqrt(hop_count)))
 
     guardrail = evaluate_mandate_action(
         policy,
@@ -626,7 +631,7 @@ def plan_multihopper_route(
     net_factor = 1.0 - (estimated_slippage_bps / 10_000.0)
     total_output_units = (principal_usd * net_factor) / TOKEN_USD_REFERENCE[out_sym]
 
-    disbursements: List[Dict[str, Any]] = []
+    disbursements: list[dict[str, Any]] = []
     for r in recipients:
         share_bps = int(r["share_bps"])
         amt_out = round(total_output_units * (share_bps / 10_000.0), 6)

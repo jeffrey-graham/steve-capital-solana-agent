@@ -16,6 +16,12 @@
       "transport": "streamable-http",
       "credentialClass": "env-managed"
     },
+    "ace-mcp": {
+      "type": "http",
+      "url": "https://api.acedata.cloud/mcp",
+      "transport": "streamable-http",
+      "credentialClass": "env-managed"
+    },
     "steve-capital-guardian": {
       "type": "http",
       "url": "http://127.0.0.1:8787/mcp",
