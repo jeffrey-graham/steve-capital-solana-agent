@@ -15,6 +15,10 @@ import json
 import sys
 from typing import Any
 
+from src.arena_backtester import (
+    plan_agent_space_delegation_dag,
+    run_walk_forward_regime_backtest,
+)
 from src.capital_engine import (
     DEFAULT_MARKET_SNAPSHOT,
     MandatePolicy,
@@ -34,7 +38,7 @@ MCP_SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2024-11-05")
 
 MCP_SERVER_INFO = {
     "name": "steve-capital-multihopper-guardian",
-    "version": "1.2.0",
+    "version": "2.0.0",
     "vendor": "OOBE SAP MCP, MultiHopper & Ace Data Cloud Ecosystem Builder",
     "protocolVersion": "2025-06-18",
     "transport": "streamable-http",
@@ -222,6 +226,34 @@ MCP_TOOLS_SCHEMA: list[dict[str, Any]] = [
             "required": ["amount", "recipient_wallet"],
         },
     },
+    {
+        "name": "steve_backtest_barbell_regimes",
+        "description": "Run a 30-day walk-forward regime stress backtest comparing StevePulse Quarter-Kelly Barbell + Pyth/Drawdown Circuit-Breaker against Uncapped Equal-Weight DeFi and Passive Kamino USDC.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "funded_balance_usd": {"type": "number", "default": 500.0},
+                "dry_powder_floor_bps": {"type": "integer", "default": 1500},
+                "max_pyth_conf_bps": {"type": "integer", "default": 30},
+            },
+        },
+    },
+    {
+        "name": "steve_plan_agent_space_dag",
+        "description": "Plan and verify a multi-specialist sub-agent delegation DAG in Steve Capital Agent Space enforcing reserve conservation, pairwise Base58 vault isolation, monotone privilege containment, and acyclic inter-agent settlements.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "funded_balance_usd": {"type": "number", "default": 500.0},
+                "min_parent_reserve_bps": {"type": "integer", "default": 1500},
+                "specs": {"type": "array", "items": {"type": "object"}},
+                "settlement_edges": {
+                    "type": "array",
+                    "items": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+    },
 ]
 
 
@@ -401,6 +433,18 @@ def handle_mcp_request(request: dict[str, Any]) -> dict[str, Any] | None:
                     session_ttl_seconds=int(args.get("session_ttl_seconds", 900)),
                     commit_interval_ms=int(args.get("commit_interval_ms", 5000)),
                     trm_risk_score=int(args.get("trm_risk_score", 3)),
+                )
+            elif tool_name == "steve_backtest_barbell_regimes":
+                payload = run_walk_forward_regime_backtest(
+                    policy,
+                    dry_powder_floor_bps=int(args.get("dry_powder_floor_bps", 1500)),
+                )
+            elif tool_name == "steve_plan_agent_space_dag":
+                payload = plan_agent_space_delegation_dag(
+                    policy,
+                    specs=args.get("specs"),
+                    settlement_edges=args.get("settlement_edges"),
+                    min_parent_reserve_bps=int(args.get("min_parent_reserve_bps", 1500)),
                 )
             else:
                 return {

@@ -16,6 +16,10 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+from src.arena_backtester import (
+    plan_agent_space_delegation_dag,
+    run_walk_forward_regime_backtest,
+)
 from src.capital_engine import (
     compute_barbell_strategy,
     delegate_subagent_vault,
@@ -97,20 +101,26 @@ def run_demo() -> dict:
         recipient_wallet="8sLbNZoA1cfnvMJLPfp98ZLAnFSYCFApfJKMbiXNLwxj",
         session_ttl_seconds=900,
     )
+    walk_forward_backtest = run_walk_forward_regime_backtest(DEFAULT_MANDATE)
+    agent_space_dag = plan_agent_space_delegation_dag(DEFAULT_MANDATE)
     return {
+        "version": "2.0.0",
         "mandate_policy_digest": DEFAULT_MANDATE.policy_digest(),
         "barbell_strategy": strategy,
         "subagent_delegation": dataclasses.asdict(subagent),
+        "agent_space_delegation_dag": agent_space_dag,
         "multihopper_compliant_route": route,
         "adrena_execution_guardrail": guardrail_sample,
         "acedata_macro_brief": ace_brief,
         "magicblock_private_settlement": magicblock_settlement,
+        "walk_forward_regime_backtest": walk_forward_backtest,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Steve Capital Autonomous Agent & MCP Server")
-    parser.add_argument("--demo", action="store_true", help="Run full 3-track simulation")
+    parser = argparse.ArgumentParser(description="StevePulse v2.0 — Steve Capital Autonomous Agent & MCP Server")
+    parser.add_argument("--demo", action="store_true", help="Run full 3-track + v2.0 backtest/DAG simulation")
+    parser.add_argument("--backtest", action="store_true", help="Run 30-day walk-forward regime stress backtest")
     parser.add_argument("--mcp-stdio", action="store_true", help="Run MCP JSON-RPC server over STDIO")
     parser.add_argument("--serve-http", type=int, metavar="PORT", help="Run HTTP MCP endpoint on 127.0.0.1:PORT")
     parser.add_argument("--check-wallet", type=str, metavar="PUBKEY", help="Inspect live Solana Mainnet-Beta wallet Arena readiness")
@@ -129,6 +139,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.check_wallet:
         report = inspect_solana_arena_wallet(args.check_wallet)
         print(json.dumps(report, indent=2))
+        return 0
+    if args.backtest:
+        print(json.dumps(run_walk_forward_regime_backtest(DEFAULT_MANDATE), indent=2))
         return 0
 
     print(json.dumps(run_demo(), indent=2))

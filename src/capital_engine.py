@@ -160,6 +160,8 @@ class MandatePolicy:
                         "solana_inspect_arena_wallet",
                         "acedata_macro_regime_brief",
                         "magicblock_plan_private_transfer",
+                        "steve_backtest_barbell_regimes",
+                        "steve_plan_agent_space_dag",
                     ],
                     "markets": ["SOL/USDC", "USDC", "XAU-PERP", "WTI-PERP"],
                     "maxPositionNotionalUsd": round(self.funded_balance_usd * (max_protocol_exposure_pct / 100.0), 2),

@@ -17,6 +17,12 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+from src.arena_backtester import (
+    DEFAULT_SPECIALIST_SPECS,
+    RegimeEpoch,
+    plan_agent_space_delegation_dag,
+    run_walk_forward_regime_backtest,
+)
 from src.capital_engine import (
     SOLANA_MAX_PACKET_BYTES,
     MandateViolationError,
@@ -206,12 +212,14 @@ class TestSteveCapitalAgent(unittest.TestCase):
 
         tools_resp = handle_mcp_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         tool_names = {t["name"] for t in tools_resp["result"]["tools"]}
-        self.assertEqual(len(tool_names), 8)
+        self.assertEqual(len(tool_names), 10)
         self.assertIn("steve_evaluate_mandate", tool_names)
         self.assertIn("multihopper_plan_compliant_route", tool_names)
         self.assertIn("acedata_macro_regime_brief", tool_names)
         self.assertIn("magicblock_plan_private_transfer", tool_names)
         self.assertIn("solana_inspect_arena_wallet", tool_names)
+        self.assertIn("steve_backtest_barbell_regimes", tool_names)
+        self.assertIn("steve_plan_agent_space_dag", tool_names)
 
         err_call = handle_mcp_request(
             {
@@ -237,7 +245,7 @@ class TestSteveCapitalAgent(unittest.TestCase):
         try:
             health = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5).read())
             self.assertTrue(health["ok"])
-            self.assertEqual(health["server"]["version"], "1.2.0")
+            self.assertEqual(health["server"]["version"], "2.0.0")
             post_req = urllib.request.Request(
                 f"http://127.0.0.1:{port}/mcp",
                 data=json.dumps(
@@ -553,6 +561,127 @@ class TestSteveCapitalAgent(unittest.TestCase):
         self.assertEqual(report["price_source"], "coinbase_spot_fallback")
         self.assertAlmostEqual(report["total_arena_equity_usd"], 36.0, places=2)
         self.assertTrue(report["arena_eligible"])
+
+    def test_20_walk_forward_backtest_outperforms_uncapped_and_obeys_drawdown_ceiling(self) -> None:
+        bt = run_walk_forward_regime_backtest(self.policy)
+        self.assertEqual(bt["horizon_days"], 30)
+        self.assertTrue(bt["within_drawdown_mandate"])
+        self.assertLess(
+            bt["steve_pulse_barbell"]["max_drawdown_bps"],
+            self.policy.max_portfolio_drawdown_bps,
+        )
+        self.assertGreater(bt["outperformance_vs_uncapped_bps"], 0)
+        self.assertGreater(bt["drawdown_reduction_vs_uncapped_bps"], 100)
+        self.assertEqual(bt["circuit_breaker_saves"], 6)
+        self.assertEqual(bt["arena_xp_projection"]["verification_mode"], "simulated_pre_mainnet")
+        self.assertTrue(bt["backtest_receipt"].startswith("steve:backtest:v2:"))
+
+    def test_21_walk_forward_backtest_circuit_breaker_fires_on_wide_pyth_oracle(self) -> None:
+        shock_epochs = [
+            RegimeEpoch(
+                day=1,
+                regime="ORACLE_LATENCY_FLASH_SHOCK",
+                pyth_max_conf_bps=55,
+                sleeve_daily_returns_bps={
+                    "kamino": 3.0,
+                    "meteora_dlmm": -250.0,
+                    "adrena": -180.0,
+                    "phoenix": -210.0,
+                },
+            )
+        ]
+        bt = run_walk_forward_regime_backtest(self.policy, epochs=shock_epochs)
+        self.assertEqual(bt["circuit_breaker_saves"], 1)
+        self.assertEqual(bt["steve_pulse_barbell"]["max_drawdown_bps"], 0)
+        self.assertGreater(bt["steve_pulse_barbell"]["net_return_bps"], -1)
+        self.assertLess(bt["benchmarks"]["uncapped_equal_weight_defi"]["net_return_bps"], -150)
+
+    def test_22_agent_space_dag_verifies_reserve_floor_vault_isolation_and_acyclicity(self) -> None:
+        dag = plan_agent_space_delegation_dag(self.policy)
+        self.assertTrue(dag["invariants_verified"]["reserve_floor_preserved"])
+        self.assertTrue(dag["invariants_verified"]["pairwise_vault_isolation"])
+        self.assertTrue(dag["invariants_verified"]["monotone_privilege_containment"])
+        self.assertTrue(dag["invariants_verified"]["acyclic_settlement_dag"])
+        self.assertEqual(len(dag["subagents"]), 3)
+        self.assertAlmostEqual(dag["total_delegated_usd"] + dag["unallocated_parent_reserve_usd"], 500.0, places=2)
+        self.assertTrue(dag["agent_space_receipt"].startswith("steve:agentspace:v2:"))
+
+    def test_23_agent_space_dag_rejects_inter_agent_settlement_cycle(self) -> None:
+        cyclic_edges = [
+            ("subagent-kamino-reserve-01", "subagent-adrena-commodity-02"),
+            ("subagent-adrena-commodity-02", "subagent-magicblock-settlement-03"),
+            ("subagent-magicblock-settlement-03", "subagent-kamino-reserve-01"),
+        ]
+        with self.assertRaises(MandateViolationError):
+            plan_agent_space_delegation_dag(self.policy, settlement_edges=cyclic_edges)
+
+    def test_24_agent_space_dag_rejects_duplicate_or_parent_vault_reuse(self) -> None:
+        dup_specs = [
+            dict(DEFAULT_SPECIALIST_SPECS[0]),
+            {**DEFAULT_SPECIALIST_SPECS[1], "vault_address": DEFAULT_SPECIALIST_SPECS[0]["vault_address"]},
+        ]
+        with self.assertRaises(MandateViolationError):
+            plan_agent_space_delegation_dag(self.policy, specs=dup_specs)
+
+        parent_reuse_specs = [
+            {**DEFAULT_SPECIALIST_SPECS[0], "vault_address": self.policy.agent_wallet},
+        ]
+        with self.assertRaises(MandateViolationError):
+            plan_agent_space_delegation_dag(self.policy, specs=parent_reuse_specs)
+
+    def test_25_agent_space_dag_rejects_reserve_floor_breach(self) -> None:
+        over_allocated = [
+            {**DEFAULT_SPECIALIST_SPECS[0], "allocated_budget_usd": 250.0},
+            {**DEFAULT_SPECIALIST_SPECS[1], "allocated_budget_usd": 200.0},
+        ]
+        # 250 + 200 = $450 > $425 max delegatable (15% reserve floor on $500)
+        with self.assertRaises(MandateViolationError):
+            plan_agent_space_delegation_dag(self.policy, specs=over_allocated, min_parent_reserve_bps=1500)
+
+    def test_26_mcp_tools_call_v2_backtest_and_agent_space_dag(self) -> None:
+        bt_resp = handle_mcp_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 30,
+                "method": "tools/call",
+                "params": {"name": "steve_backtest_barbell_regimes", "arguments": {"funded_balance_usd": 500.0}},
+            }
+        )
+        self.assertFalse(bt_resp["result"]["isError"])
+        self.assertTrue(bt_resp["result"]["structuredContent"]["within_drawdown_mandate"])
+
+        dag_resp = handle_mcp_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 31,
+                "method": "tools/call",
+                "params": {"name": "steve_plan_agent_space_dag", "arguments": {"funded_balance_usd": 500.0}},
+            }
+        )
+        self.assertFalse(dag_resp["result"]["isError"])
+        self.assertEqual(len(dag_resp["result"]["structuredContent"]["subagents"]), 3)
+
+    def test_27_cli_demo_and_backtest_entrypoints_emit_valid_json(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        from src.cli import main as cli_main
+
+        buf_demo = io.StringIO()
+        with redirect_stdout(buf_demo):
+            rc1 = cli_main(["--demo"])
+        self.assertEqual(rc1, 0)
+        demo_doc = json.loads(buf_demo.getvalue())
+        self.assertEqual(demo_doc["version"], "2.0.0")
+        self.assertIn("walk_forward_regime_backtest", demo_doc)
+        self.assertIn("agent_space_delegation_dag", demo_doc)
+
+        buf_bt = io.StringIO()
+        with redirect_stdout(buf_bt):
+            rc2 = cli_main(["--backtest"])
+        self.assertEqual(rc2, 0)
+        bt_doc = json.loads(buf_bt.getvalue())
+        self.assertEqual(bt_doc["horizon_days"], 30)
 
 
 if __name__ == "__main__":
