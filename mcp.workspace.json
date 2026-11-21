@@ -5,10 +5,15 @@
       "url": "https://mcp.sap.oobeprotocol.ai/mcp",
       "transport": "streamable-http"
     },
+    "sap_payments": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["--yes", "--package", "@oobe-protocol-labs/sap-mcp-server", "sap-mcp-payments"],
+      "credentialClass": "local-signer-boundary"
+    },
     "mh-docs": {
-      "type": "http",
-      "url": "https://dev-docs.multihopper.com/mcp",
-      "transport": "streamable-http"
+      "type": "sse",
+      "url": "https://dev-docs.multihopper.com/mcp"
     },
     "mh-api": {
       "type": "http",

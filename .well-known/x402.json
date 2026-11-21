@@ -1,0 +1,25 @@
+{
+  "x402Version": 1,
+  "agentId": "stevepulse-guardian",
+  "name": "StevePulse v4.0 — OOBE SAP MCP Autonomous Capital & MultiHopper Engine",
+  "snsDomain": "stevepulse.sol",
+  "network": "solana-mainnet",
+  "assetMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  "payTo": "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
+  "services": [
+    {
+      "serviceId": "stevepulse:macro-regime-feed",
+      "description": "Pyth-gated Quarter-Kelly Barbell allocation + Ace Data Cloud macro regime signal",
+      "scheme": "exact",
+      "maxAmountRequired": "1000",
+      "tokenDecimals": 6
+    },
+    {
+      "serviceId": "stevepulse:multihopper-v0-quote",
+      "description": "Single-principal MultiHopper v0+ALT split route + two-phase confirm-broadcast plan",
+      "scheme": "exact",
+      "maxAmountRequired": "1500",
+      "tokenDecimals": 6
+    }
+  ]
+}

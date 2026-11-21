@@ -1,0 +1,34 @@
+{
+  "name": "StevePulse Guardian",
+  "description": "Autonomous Solana capital, Steve Launchpad & MultiHopper routing agent enforcing Steve Capital Kernel Mandates, Quarter-Kelly Barbell sizing, x402 micro-USDC settlement, and Pyth/TRM circuit breakers.",
+  "image": "https://jeffrey-graham.github.io/steve-capital-solana-agent/og.png",
+  "external_url": "https://jeffrey-graham.github.io/steve-capital-solana-agent/",
+  "attributes": [
+    { "trait_type": "Protocol", "value": "SAP v2" },
+    { "trait_type": "Runtime", "value": "OOBE SAP MCP (15 Tools + Prompts) + Steve Capital" },
+    { "trait_type": "Identity", "value": "Metaplex MPL Core + SNS + x402" },
+    { "trait_type": "DevnetAnchorTx", "value": "4hH9nkdRMjkwXutHvxHs1fgEs4Zw9trqhA8pnBi6AHfpDChbb9cjRx2cev8GM5y5dBPTBr5FqeKrE1ff6KhnZF6e" }
+  ],
+  "sap": {
+    "agentId": "stevepulse-guardian",
+    "capabilities": [
+      "risk:management",
+      "kamino:lend",
+      "adrena:perp",
+      "jupiter:swap",
+      "multihopper:route",
+      "launchpad:audit",
+      "metaplex:identity",
+      "sns:identity",
+      "x402:payments"
+    ]
+  },
+  "sns": {
+    "domain": "stevepulse.sol"
+  },
+  "x402": {
+    "settlementMode": "x402",
+    "endpoint": "https://jeffrey-graham.github.io/steve-capital-solana-agent/.well-known/x402.json",
+    "tokenMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+  }
+}

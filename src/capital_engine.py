@@ -20,6 +20,26 @@ from typing import Any
 SOLANA_MAX_PACKET_BYTES = 1232
 STEVE_MIN_ARENA_FUNDING_USD = 20.0
 
+MULTIHOPPER_CORE_PROGRAM_ID = "3jLoS2wbNgtKzieUUxwg6Xhdv6gbZkHDtPWA9ZAgspFh"
+MULTIHOPPER_ORCHESTRATOR_PROGRAM_ID = "4TPCmR2uN3hDM1FbTsf7ZtFXwXGSz4u1Kxv5YHj6eruX"
+MULTIHOPPER_TRANSFER_HOOK_PROGRAM_ID = "2JEv3pD6nczEvn1xDXaEzehkJofPPjoQQpnW5nGY3r52"
+
+# Official MultiHopper Mainnet 10-Tier Per-Hop Lamport Schedule (dev-docs.multihopper.com/concepts/pricing)
+MULTIHOPPER_FEE_TIERS_USD_LAMPORTS: tuple[tuple[float, int], ...] = (
+    (50.00, 0),
+    (106.25, 125_000),
+    (162.50, 375_000),
+    (218.75, 625_000),
+    (275.00, 875_000),
+    (331.25, 1_125_000),
+    (387.50, 1_375_000),
+    (443.75, 1_625_000),
+    (500.00, 1_875_000),
+)
+MULTIHOPPER_TOP_TIER_LAMPORTS_PER_HOP = 2_000_000
+MULTIHOPPER_PERCENT_FEE_BPS = 50  # 0.50% total; 50/50 split -> 25 bps atomic integrator share
+MULTIHOPPER_TRM_SCREENING_LAMPORTS_PER_WALLET = 2_000_000  # 0.002 SOL per screened wallet
+
 SUPPORTED_ECOSYSTEM_PROTOCOLS = frozenset(
     {
         "kamino",
@@ -162,6 +182,8 @@ class MandatePolicy:
                         "magicblock_plan_private_transfer",
                         "steve_backtest_barbell_regimes",
                         "steve_plan_agent_space_dag",
+                        "sap_build_agent_identity_passport",
+                        "solana_simulate_v0_dry_run",
                     ],
                     "markets": ["SOL/USDC", "USDC", "XAU-PERP", "WTI-PERP"],
                     "maxPositionNotionalUsd": round(self.funded_balance_usd * (max_protocol_exposure_pct / 100.0), 2),
@@ -576,6 +598,65 @@ def compute_barbell_strategy(
     }
 
 
+def compute_multihopper_onchain_fees(
+    hop_amount_usd: float,
+    *,
+    hops: int,
+    destination_count: int = 1,
+) -> dict[str, Any]:
+    """
+    Computes the official MultiHopper mainnet 10-tier fee schedule:
+      - `0.50%` (`50 bps`) percent fee split 50/50 atomically on-chain (`25 bps` integrator share).
+      - Tier 0..9 per-hop lamport fee (`0` up to `2,000,000` lamports/hop above $500).
+      - `0.002 SOL` (`2,000,000` lamports) TRM Labs compliance screening fee per screened wallet.
+    """
+    if hop_amount_usd < 0:
+        raise ValueError("hop_amount_usd must be non-negative")
+    effective_hops = max(3, min(10, int(hops)))
+    dest_cnt = max(1, min(20, int(destination_count)))
+
+    tier_index = 9
+    per_hop_lamports = MULTIHOPPER_TOP_TIER_LAMPORTS_PER_HOP
+    for idx, (upper_usd, lamports) in enumerate(MULTIHOPPER_FEE_TIERS_USD_LAMPORTS):
+        if hop_amount_usd <= upper_usd:
+            tier_index = idx
+            per_hop_lamports = lamports
+            break
+
+    total_flat_fee_lamports = per_hop_lamports * effective_hops
+    # Sender + destinations screened on mainnet compliance-enabled deployments
+    screened_wallets = 1 + dest_cnt
+    screening_fee_lamports = screened_wallets * MULTIHOPPER_TRM_SCREENING_LAMPORTS_PER_WALLET
+    dispersion_rent_lamports = (dest_cnt * 1_461_600) if dest_cnt > 1 else 0
+    required_sol_upfront_lamports = (
+        total_flat_fee_lamports + screening_fee_lamports + dispersion_rent_lamports + 150_000
+    )
+
+    percent_fee_usd = round(hop_amount_usd * (MULTIHOPPER_PERCENT_FEE_BPS / 10_000.0), 6)
+    integrator_share_usd = round(percent_fee_usd * 0.5, 6)
+
+    return {
+        "tierIndex": tier_index,
+        "usdValueMicros": round(hop_amount_usd * 1_000_000),
+        "percentFeeBps": MULTIHOPPER_PERCENT_FEE_BPS,
+        "integratorShareBps": 25,
+        "percentFeeUsd": percent_fee_usd,
+        "integratorPercentShareUsd": integrator_share_usd,
+        "perHopFlatLamports": per_hop_lamports,
+        "effectiveProtocolHops": effective_hops,
+        "totalFlatFeeLamports": total_flat_fee_lamports,
+        "sol": {
+            "requiredSolUpFrontLamports": required_sol_upfront_lamports,
+            "breakdown": {
+                "screeningFeeLamports": screening_fee_lamports,
+                "dispersionRentLamports": dispersion_rent_lamports,
+                "keeperAndNetworkBufferLamports": 150_000,
+            },
+        },
+        "priceSource": "onchain_pool",
+    }
+
+
 def plan_multihopper_route(
     policy: MandatePolicy,
     *,
@@ -603,6 +684,10 @@ def plan_multihopper_route(
         raise ValueError("input_amount must be > 0")
     if not recipients:
         raise ValueError("At least one recipient split is required.")
+    if len(recipients) > 20:
+        raise MandateViolationError(
+            f"MH_017: MultiHopper multi-destination routes support at most 20 destinations (got {len(recipients)})."
+        )
 
     split_bps_total = sum(int(r.get("share_bps", 0)) for r in recipients)
     if split_bps_total != 10_000:
@@ -726,4 +811,63 @@ def plan_multihopper_route(
         },
         "mandate_receipt": guardrail["verifiable_receipt"],
         "multihopper_route_id": f"mh:route:v1:{route_digest[:28]}",
+        "multihopper_programs": {
+            "core": MULTIHOPPER_CORE_PROGRAM_ID,
+            "orchestrator": MULTIHOPPER_ORCHESTRATOR_PROGRAM_ID,
+            "transferHookGuardToken2022": MULTIHOPPER_TRANSFER_HOOK_PROGRAM_ID,
+        },
+        "multihopper_onchain_fees": compute_multihopper_onchain_fees(
+            principal_usd * net_factor,
+            hops=max(3, hop_count),
+            destination_count=len(recipients),
+        ),
+        "multihopper_v1_agentic_flow": {
+            "mcpEndpoint": "https://multihopper.com/api/mcp",
+            "restBase": "https://multihopper.com/api/v1",
+            "idempotencyKey": f"idem-{route_digest[:24]}",
+            "externalId": f"steve-{policy.mandate_id}-{route_digest[:12]}",
+            "twoPhaseConfirmBroadcast": True,
+            "strictBroadcastOrder": [
+                {
+                    "step": 1,
+                    "group": "keeperFundingTx",
+                    "txFormat": "v0",
+                    "signingRule": "slot_preserve_ephemeral_sigs",
+                    "postConfirmAction": "POST /api/v1/transfers/{id}/confirm-broadcast (keeperFundingSignature ONLY — prevents double-funding, MH_039 guard)",
+                },
+                {
+                    "step": 2,
+                    "group": "routeInitTxs",
+                    "txFormat": "v0",
+                    "signingRule": "slot_preserve_ephemeral_sigs",
+                    "postConfirmDelaySec": 3,
+                },
+                {
+                    "step": 3,
+                    "group": "orchestratorInitTx",
+                    "txFormat": "legacy",
+                    "signingRule": "partialSign",
+                    "postConfirmDelaySec": 3,
+                },
+                {
+                    "step": 4,
+                    "group": "sessionInitTxs",
+                    "txFormat": "v0",
+                    "signingRule": "slot_preserve_ephemeral_sigs",
+                },
+                *(
+                    [
+                        {
+                            "step": 5,
+                            "group": "dispersionInitTxs",
+                            "txFormat": "v0",
+                            "signingRule": "sourceOwner_sign",
+                            "exitBindingGuard": "MH_041_all_destinations_bound_before_activation",
+                        }
+                    ]
+                    if len(recipients) > 1
+                    else []
+                ),
+            ],
+        },
     }
